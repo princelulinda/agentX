@@ -427,21 +427,68 @@ def login_view(request):
 @permission_classes([AllowAny])
 def register_view(request):
     serializer = RegisterSerializer(data=request.data)
-    if serializer.is_valid():
-        user = serializer.save()
-        refresh = RefreshToken.for_user(user)
+    
+    try:
+        if serializer.is_valid():
+            with transaction.atomic():
+                # Créer l'utilisateur
+                user = serializer.save()
+                
+                # Créer le wallet USDT
+                wallet = USDTWallet.objects.create(user=user)
+                
+                # Créer ou récupérer le profil utilisateur
+                profile, created = UserProfile.objects.get_or_create(user=user)
+
+                # Gérer le code de parrainage s'il existe
+                referral_code = serializer.validated_data.get('referral_code')
+                if referral_code:
+                    try:
+                        referrer_profile = UserProfile.objects.get(referral_code=referral_code)
+                        profile.referred_by = referrer_profile
+                        profile.save()
+                    except UserProfile.DoesNotExist:
+                        pass
+
+                # Générer le token JWT
+                refresh = RefreshToken.for_user(user)
+                
+                return Response({
+                    'status': 'success',
+                    'message': 'Inscription réussie !',
+                    'data': {
+                        'user': {
+                            'id': user.id,
+                            'email': user.email,
+                            'first_name': user.first_name,
+                            'last_name': user.last_name,
+                            'referral_code': profile.referral_code,
+                        },
+                        'wallet': {
+                            'address': wallet.address,
+                            'balance': str(wallet.balance)
+                        },
+                        'tokens': {
+                            'refresh': str(refresh),
+                            'access': str(refresh.access_token)
+                        }
+                    }
+                }, status=status.HTTP_201_CREATED)
+        
         return Response({
-            'message': 'Inscription réussie',
-            'refresh': str(refresh),
-            'access': str(refresh.access_token),
-            'user': {
-                'id': user.id,
-                'email': user.email,
-                'first_name': user.first_name,
-                'last_name': user.last_name
+            'status': 'error',
+            'message': 'Données invalides',
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+                
+    except Exception as e:
+        return Response({
+            'status': 'error',
+            'message': 'Une erreur est survenue lors de la création du compte',
+            'errors': {
+                'detail': str(e)
             }
-        }, status=status.HTTP_201_CREATED)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        }, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])

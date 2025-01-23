@@ -283,12 +283,20 @@ class Investment(models.Model):
 # Signal pour créer automatiquement un profil utilisateur
 @receiver(post_save, sender=User)
 def create_user_profile(sender, instance, created, **kwargs):
+    """Signal pour créer automatiquement un profil utilisateur"""
     if created:
-        UserProfile.objects.create(user=instance)
+        try:
+            UserProfile.objects.get_or_create(user=instance)
+        except Exception:
+            pass
 
 @receiver(post_save, sender=User)
 def save_user_profile(sender, instance, **kwargs):
+    """Signal pour sauvegarder le profil utilisateur"""
     try:
-        instance.profile.save()
-    except UserProfile.DoesNotExist:
-        UserProfile.objects.create(user=instance)
+        if not hasattr(instance, 'profile'):
+            UserProfile.objects.create(user=instance)
+        else:
+            instance.profile.save()
+    except Exception:
+        pass

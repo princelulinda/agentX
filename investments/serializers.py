@@ -9,6 +9,7 @@ from .models import (
 from django.contrib.auth.models import User
 from django.db.models import Sum
 from decimal import Decimal
+from rest_framework.validators import UniqueValidator
 
 class InvestmentPlanSerializer(serializers.ModelSerializer):
     class Meta:
@@ -154,7 +155,10 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError('Veuillez fournir email et mot de passe')
 
 class RegisterSerializer(serializers.ModelSerializer):
-    email = serializers.EmailField(required=True)
+    email = serializers.EmailField(
+        required=True,
+        validators=[UniqueValidator(queryset=User.objects.all())]
+    )
     password = serializers.CharField(write_only=True, required=True)
     password_confirm = serializers.CharField(write_only=True, required=True)
     first_name = serializers.CharField(required=True)
@@ -166,48 +170,37 @@ class RegisterSerializer(serializers.ModelSerializer):
         fields = ('email', 'password', 'password_confirm', 'first_name', 'last_name', 'referral_code')
 
     def validate(self, attrs):
-        if attrs['password'] != attrs['password_confirm']:
-            raise serializers.ValidationError({"password": "Les mots de passe ne correspondent pas."})
-        
-        if User.objects.filter(email=attrs['email']).exists():
-            raise serializers.ValidationError({"email": "Cet email est déjà utilisé."})
+        if attrs.get('password') != attrs.get('password_confirm'):
+            raise serializers.ValidationError({
+                "password": "Les mots de passe ne correspondent pas."
+            })
 
-        # Vérifier le code de parrainage s'il est fourni
+        # Validation du code de parrainage
         referral_code = attrs.get('referral_code')
         if referral_code:
             try:
                 UserProfile.objects.get(referral_code=referral_code)
             except UserProfile.DoesNotExist:
-                raise serializers.ValidationError({"referral_code": "Code de parrainage invalide."})
+                raise serializers.ValidationError({
+                    "referral_code": "Code de parrainage invalide."
+                })
 
         return attrs
 
     def create(self, validated_data):
+        validated_data.pop('password_confirm')
         referral_code = validated_data.pop('referral_code', None)
-        password_confirm = validated_data.pop('password_confirm')
         
-        # Créer l'utilisateur
         user = User.objects.create(
-            username=validated_data['email'],  # Utiliser l'email comme nom d'utilisateur
+            username=validated_data['email'],
             email=validated_data['email'],
             first_name=validated_data['first_name'],
             last_name=validated_data['last_name']
         )
+        
         user.set_password(validated_data['password'])
         user.save()
-
-        # Créer le profil utilisateur
-        profile = UserProfile.objects.create(user=user)
-
-        # Gérer le parrainage
-        if referral_code:
-            try:
-                referrer_profile = UserProfile.objects.get(referral_code=referral_code)
-                profile.referred_by = referrer_profile
-                profile.save()
-            except UserProfile.DoesNotExist:
-                pass
-
+        
         return user
 
 class WithdrawSerializer(serializers.Serializer):
